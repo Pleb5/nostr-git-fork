@@ -199,6 +199,7 @@
 		;[...keys, ...suggestions.map(s => s.pubkey)].forEach(pubkey => {
 			ensureProfile(pubkey || "")
 		})
+	});
 </script>
 
 <div class="space-y-2">
