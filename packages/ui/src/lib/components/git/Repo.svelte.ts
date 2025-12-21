@@ -333,6 +333,7 @@ export class Repo {
         // Initialize the WorkerManager (can be slow)
         await this.workerManager.initialize();
 
+         const loadedTokens = await tokens.waitForInitialization();
         // Wait for tokens to be loaded from localStorage before configuring auth
         if (loadedTokens.length > 0) {
           await this.workerManager.setAuthConfig({ tokens: loadedTokens });
