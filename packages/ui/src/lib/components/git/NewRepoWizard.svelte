@@ -12,6 +12,7 @@
   } from "../../hooks/useNewRepo.svelte";
   import { tokens as tokensStore, type Token } from "../../stores/tokens.js";
   import { graspServersStore } from "../../stores/graspServers.js";
+  import { canonicalRepoKey } from "@nostr-git/shared-types";
   const { Button } = useRegistry();
 
   function deriveOrigins(input: string): { wsOrigin: string; httpOrigin: string } {
@@ -177,17 +178,20 @@
     // If the user hasn't manually edited clone URLs, fully regenerate the list based on current inputs
     if (!userEditedCloneUrl) {
       const host = availabilityHost || providerHost(selectedProvider);
+      const nostrUrl = `nostr://${canonicalRepoKey(userPubkey, name)}`;
 
       if (selectedProvider === "grasp") {
-        const nostrUrl = `nostr://${userPubkey ?? '[pubkey]'}/${name}`;
         advancedSettings.cloneUrls = [nostrUrl];
       } else {
         // For non-GRASP: prefer HTTPS primary (when derivable), plus nostr secondary
-        const httpsUrl = host && username ? `https://${host}/${username}/${name}.git` : undefined;
-        const nostrUrl = `nostr://${userPubkey ?? '[pubkey]'}/${name}`;
+        const httpsUrl = host && username
+          ? `https://${host}/${username}/${name}.git` 
+          : undefined;
 
         if (httpsUrl) {
-          advancedSettings.cloneUrls = nostrUrl ? [httpsUrl, nostrUrl] : [httpsUrl];
+          advancedSettings.cloneUrls = nostrUrl 
+            ? [httpsUrl, nostrUrl] 
+            : [httpsUrl];
         } else {
           // If HTTPS not derivable yet, avoid populating with transient nostr values
           advancedSettings.cloneUrls = [];
