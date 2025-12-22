@@ -255,17 +255,29 @@ export class Repo {
       }
     });
 
-    repoStateEvent.subscribe((event) => {
+    repoStateEvent.subscribe(async (event) => {
       if (event) {
         this.#repoStateEvent = event; // Set the reactive state
         this.#state = parseRepoStateEvent(event);
 
         // Process the Repository State event in BranchManager (verified against worker when possible)
         if (initialRepoEvent) {
-          // Fire-and-forget; verification is async
-          void this.branchManager.processRepoStateEventVerified(event, initialRepoEvent);
+          // Wait for verification to complete so we can update selected branch
+          await this.branchManager.processRepoStateEventVerified(event, initialRepoEvent);
         } else {
           this.branchManager.processRepoStateEvent(event);
+        }
+
+        // Update selected branch to match the resolved main branch from state
+        const resolvedMainBranch = this.branchManager.getMainBranch();
+        if (resolvedMainBranch) {
+          const shortBranch = resolvedMainBranch.split("/").pop() || resolvedMainBranch;
+          // Only update if not already set or if it's different (to avoid unnecessary updates)
+          if (!this.#selectedBranchState || this.#selectedBranchState !== shortBranch) {
+            this.#selectedBranchState = shortBranch;
+            this.branchManager.setSelectedBranch(shortBranch);
+            console.log(`✅ Updated selected branch to: ${shortBranch} (from repo state)`);
+          }
         }
 
         // Invalidate branch cache when repo state changes
@@ -322,6 +334,16 @@ export class Repo {
           this.#refsLoading = true;
           await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
           this.refs = this.branchManager.getAllRefs();
+          
+          // Set initial selected branch from resolved main branch
+          const resolvedMainBranch = this.branchManager.getMainBranch();
+          if (resolvedMainBranch && !this.#selectedBranchState) {
+            const shortBranch = resolvedMainBranch.split("/").pop() || resolvedMainBranch;
+            this.#selectedBranchState = shortBranch;
+            this.branchManager.setSelectedBranch(shortBranch);
+            console.log(`✅ Set initial selected branch to: ${shortBranch} (from state)`);
+          }
+          
           console.log(`✅ Loaded ${this.refs.length} refs immediately from state`);
         } catch (error) {
           console.error("Failed to load branches from state:", error);
@@ -358,6 +380,16 @@ export class Repo {
           this.#refsLoading = true;
           await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
           this.refs = this.branchManager.getAllRefs();
+          
+          // Update selected branch state to match the resolved main branch
+          // This ensures the UI reflects the actual checked-out branch after initialization
+          const resolvedMainBranch = this.branchManager.getMainBranch();
+          if (resolvedMainBranch && !this.#selectedBranchState) {
+            const shortBranch = resolvedMainBranch.split("/").pop() || resolvedMainBranch;
+            this.#selectedBranchState = shortBranch;
+            this.branchManager.setSelectedBranch(shortBranch);
+            console.log(`✅ Set initial selected branch to: ${shortBranch}`);
+          }
         } catch (error) {
           console.error("Failed to load branches:", error);
           this.refs = [];
@@ -763,6 +795,18 @@ export class Repo {
 
     // Delegate to BranchManager
     await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
+    
+    // Update selected branch to match the resolved main branch
+    const resolvedMainBranch = this.branchManager.getMainBranch();
+    if (resolvedMainBranch) {
+      const shortBranch = resolvedMainBranch.split("/").pop() || resolvedMainBranch;
+      // Only update if not already set or if it's different
+      if (!this.#selectedBranchState || this.#selectedBranchState !== shortBranch) {
+        this.#selectedBranchState = shortBranch;
+        this.branchManager.setSelectedBranch(shortBranch);
+        console.log(`✅ Updated selected branch to: ${shortBranch} (from loadBranchesFromRepo)`);
+      }
+    }
   }
 
   get repoId() {
@@ -1099,14 +1143,14 @@ export class Repo {
 
       // Use the CommitManager's loadPage method which sets the page and calls loadCommits
       const originalLoadCommits = this.commitManager.loadCommits.bind(this.commitManager);
-      
-      const branchToLoad = this.selectedBranch || effectiveMainBranch;
 
       // Temporarily override loadCommits to provide the required parameters
+      // Read selectedBranch dynamically inside the closure to get the current value
       this.commitManager.loadCommits = async () => {
+        const branchToLoad = this.selectedBranch || effectiveMainBranch;
         return await originalLoadCommits(
           effectiveRepoId!, // Use the effective repository ID
-          branchToLoad, // Use selected branch if available, fallback to main
+          branchToLoad, // Use selected branch if available, fallback to main (read dynamically)
           effectiveMainBranch!
         );
       };
