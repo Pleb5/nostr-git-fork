@@ -1,9 +1,7 @@
 <script lang="ts">
   import { formatDistanceToNow } from "date-fns";
-  import { MessageSquare, Heart, Copy, Check, User } from "@lucide/svelte";
-  import { useRegistry } from "../../useRegistry";
+  import { Copy, Check } from "@lucide/svelte";
   import NostrAvatar from "./NostrAvatar.svelte";
-  const { Button, Card, CardContent, Textarea } = useRegistry();
   import BaseItemCard from "../BaseItemCard.svelte";
 
   // Real git commit data structure
@@ -31,6 +29,7 @@
     onComment?: (commitId: string, comment: string) => void;
     onNavigate?: (commitId: string) => void;
     href?: string; // Optional direct href for navigation
+    getParentHref?: (commitId: string) => string; // Function to generate parent commit href
     // Optional avatar and display name supplied by app layer
     avatarUrl?: string;
     displayName?: string;
@@ -41,10 +40,9 @@
 
   let {
     commit,
-    onReact,
-    onComment,
     onNavigate,
     href,
+    getParentHref,
     avatarUrl,
     displayName,
     pubkey,
@@ -52,8 +50,6 @@
     nip39,
   }: CommitCardProps = $props();
 
-  let showComments = $state(false);
-  let newComment = $state("");
   let copied = $state(false);
 
   function truncateHash(hash: string): string {
@@ -68,28 +64,6 @@
     navigator.clipboard.writeText(commit.oid);
     copied = true;
     setTimeout(() => (copied = false), 2000);
-  }
-
-  function handleReact() {
-    onReact?.(commit.oid, "heart");
-  }
-
-  function handleComment() {
-    if (newComment.trim()) {
-      onComment?.(commit.oid, newComment.trim());
-      newComment = "";
-      showComments = false;
-    }
-  }
-
-  // Get initials for avatar fallback
-  function getInitials(name: string): string {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .substring(0, 2);
   }
 
   // Build href fallback
@@ -148,69 +122,20 @@
   <!-- footer actions: react/comment and parent -->
   {#snippet slotFooter()}
     <div class="flex items-center justify-between w-full">
-      <div class="flex items-center gap-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={handleReact}
-          class="h-8 px-2 text-muted-foreground hover:text-red-500 transition-colors"
-        >
-          <Heart class="h-4 w-4 mr-1" />
-          <span class="text-xs">0</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={() => (showComments = !showComments)}
-          class="h-8 px-2 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <MessageSquare class="h-4 w-4 mr-1" />
-          <span class="text-xs">Comment</span>
-        </Button>
-      </div>
-
       {#if commit.commit.parent.length > 0}
-        <div class="text-xs text-muted-foreground whitespace-nowrap">
-          Parent: {truncateHash(commit.commit.parent[0])}
-        </div>
+        {#if getParentHref}
+          <a
+            href={getParentHref(commit.commit.parent[0])}
+            class="text-xs text-muted-foreground whitespace-nowrap hover:text-foreground hover:underline transition-colors"
+          >
+            Parent: {truncateHash(commit.commit.parent[0])}
+          </a>
+        {:else}
+          <div class="text-xs text-muted-foreground whitespace-nowrap">
+            Parent: {truncateHash(commit.commit.parent[0])}
+          </div>
+        {/if}
       {/if}
     </div>
   {/snippet}
 </BaseItemCard>
-
-{#if showComments}
-  <Card class="git-card transition-colors mt-2">
-    <CardContent class="p-4">
-      <div class="space-y-3">
-        <div class="flex gap-2">
-          <div
-            class="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mt-1"
-          >
-            <User class="h-3 w-3 text-muted-foreground" />
-          </div>
-          <div class="flex-1 space-y-2">
-            <Textarea
-              bind:value={newComment}
-              placeholder="Add a comment about this commit..."
-              class="min-h-[60px] resize-none text-sm"
-            />
-            <div class="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onclick={() => (showComments = false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onclick={handleComment}
-                disabled={!newComment.trim()}
-                class="bg-git hover:bg-git-hover"
-              >
-                Comment
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </CardContent>
-  </Card>
-{/if}
