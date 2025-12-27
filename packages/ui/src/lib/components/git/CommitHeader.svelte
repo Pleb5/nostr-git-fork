@@ -17,6 +17,8 @@
     pubkey?: string;
     nip05?: string;
     nip39?: string;
+    // Optional: function to generate parent commit href for navigation
+    getParentHref?: (commitId: string) => string;
   }
 
   let {
@@ -31,6 +33,7 @@
     pubkey,
     nip05,
     nip39,
+    getParentHref,
   }: Props = $props();
 
   // Format date for display
@@ -123,9 +126,20 @@
             <span class="truncate">
               {parents.length === 1 ? "parent" : "parents"}:
               {#each parents as parent, i}
-                <code class="mx-1 rounded bg-muted px-1 py-0.5 text-xs font-mono" title={parent}>
-                  {parent.slice(0, 7)}
-                </code>{#if i < parents.length - 1},{/if}
+                {#if getParentHref}
+                  <a
+                    href={getParentHref(parent)}
+                    class="mx-1 rounded bg-muted px-1 py-0.5 text-xs font-mono hover:bg-muted/80 hover:text-foreground transition-colors"
+                    title={parent}
+                  >
+                    {parent.slice(0, 7)}
+                  </a>
+                {:else}
+                  <code class="mx-1 rounded bg-muted px-1 py-0.5 text-xs font-mono" title={parent}>
+                    {parent.slice(0, 7)}
+                  </code>
+                {/if}
+                {#if i < parents.length - 1},{/if}
               {/each}
             </span>
           </div>
