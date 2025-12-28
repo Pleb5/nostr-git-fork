@@ -29,9 +29,11 @@
     graspServerUrls?: string[]; // Optional list of known GRASP servers to display
     // Optional DI: override the useForkRepo hook (for Storybook/tests)
     useForkRepoImpl?: typeof useForkRepo;
+    // Optional callback to navigate to the forked repository after fork completion
+    navigateToForkedRepo?: (result: ForkResult) => void;
   }
 
-  const { repo, pubkey, onPublishEvent, graspServerUrls = [], useForkRepoImpl }: Props = $props();
+  const { repo, pubkey, onPublishEvent, graspServerUrls = [], useForkRepoImpl, navigateToForkedRepo }: Props = $props();
 
   // Initialize the useForkRepo hook (allow DI override)
   const forkImpl = useForkRepoImpl ?? useForkRepo;
@@ -49,6 +51,11 @@
         message: "Repository forked successfully!",
         variant: "default",
       });
+      // Navigate to the forked repo after a short delay if callback is provided
+      // This gives users time to see the success message
+      if (navigateToForkedRepo && result.announcementEvent) {
+        navigateToForkedRepo(result);
+      }
     },
     onPublishEvent: onPublishEvent,
   });
@@ -187,7 +194,7 @@
         repo
           .getCommitHistory({ depth: 100 })
           .then((commits) => {
-            availableCommits = commits || repo.commits || [];
+            availableCommits = commits.commits || repo.commits || [];
             loadingCommits = false;
           })
           .catch((error) => {
@@ -935,7 +942,7 @@
                   </div>
                 {:else if showCommitDropdown && filteredCommits.length > 0}
                   <div
-                    class="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-lg max-h-96 overflow-y-auto"
+                    class="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto"
                   >
                     {#each filteredCommits as commit}
                       <button
@@ -1193,20 +1200,33 @@
 
             <div class="bg-gray-800 rounded-lg p-4 border border-gray-600">
               <p class="text-sm text-gray-300">Your fork is ready:</p>
-              <div class="mt-2 flex items-center justify-between gap-3">
-                <a
-                  href={(completedResult?.forkUrl || "").replace(/\.git$/, "")}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  class="text-blue-400 hover:text-blue-300 break-all inline-flex items-center gap-1"
-                >
-                  <span>{(completedResult?.forkUrl || "").replace(/\.git$/, "")}</span>
-                  <ExternalLink class="w-3 h-3" />
-                </a>
+              <div class="mt-2 flex items-center justify-between gap-3 flex-wrap">
+                {#if navigateToForkedRepo && completedResult?.announcementEvent}
+                  <!-- Show View Repository button for repos with announcementEvent -->
+                  <button
+                    type="button"
+                    onclick={() => completedResult && navigateToForkedRepo(completedResult)}
+                    class="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 flex-1 min-w-0"
+                  >
+                    <span class="truncate">View Repository</span>
+                    <ExternalLink class="w-3 h-3 flex-shrink-0" />
+                  </button>
+                {:else if completedResult?.forkUrl}
+                  <!-- External provider: Show external link -->
+                  <a
+                    href={(completedResult.forkUrl || "").replace(/\.git$/, "")}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    class="text-blue-400 hover:text-blue-300 break-all inline-flex items-center gap-1 flex-1 min-w-0"
+                  >
+                    <span class="truncate">{(completedResult.forkUrl || "").replace(/\.git$/, "")}</span>
+                    <ExternalLink class="w-3 h-3 flex-shrink-0" />
+                  </a>
+                {/if}
                 <button
                   type="button"
                   onclick={copyForkUrl}
-                  class="px-2 py-1 text-xs border border-gray-600 rounded text-gray-300 hover:text-white hover:border-gray-500"
+                  class="px-2 py-1 text-xs border border-gray-600 rounded text-gray-300 hover:text-white hover:border-gray-500 flex-shrink-0"
                   >Copy URL</button
                 >
               </div>
