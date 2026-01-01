@@ -41,7 +41,9 @@ export class Repo {
   patches = $state<PatchEvent[]>([]);
   hashtags = $state<string[]>([]);
   tokens = $state<Token[]>([]);
-  refs: Array<{ name: string; type: "heads" | "tags"; fullRef: string; commitId: string }> = $state([]);
+  refs: Array<{ name: string; type: "heads" | "tags"; fullRef: string; commitId: string }> = $state(
+    []
+  );
   earliestUniqueCommit: string = $state("");
   createdAt: string = $state("");
   clone: string[] = $state([]);
@@ -70,7 +72,6 @@ export class Repo {
   commitManager!: CommitManager;
   branchManager!: BranchManager;
   fileManager!: FileManager;
-
 
   // Private caches used across helpers
   #mergedRefsCache:
@@ -334,7 +335,7 @@ export class Repo {
           this.#refsLoading = true;
           await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
           this.refs = this.branchManager.getAllRefs();
-          
+
           // Set initial selected branch from resolved main branch
           const resolvedMainBranch = this.branchManager.getMainBranch();
           if (resolvedMainBranch && !this.#selectedBranchState) {
@@ -343,7 +344,7 @@ export class Repo {
             this.branchManager.setSelectedBranch(shortBranch);
             console.log(`✅ Set initial selected branch to: ${shortBranch} (from state)`);
           }
-          
+
           console.log(`✅ Loaded ${this.refs.length} refs immediately from state`);
         } catch (error) {
           console.error("Failed to load branches from state:", error);
@@ -371,7 +372,11 @@ export class Repo {
           const cloneUrls = [...(this.#repo?.clone || [])];
           const branch = this.branchManager.getMainBranch();
           if (repoId && cloneUrls.length > 0) {
-            this.syncStatus = await this.workerManager.syncWithRemote({ repoId, cloneUrls, branch });
+            this.syncStatus = await this.workerManager.syncWithRemote({
+              repoId,
+              cloneUrls,
+              branch,
+            });
           }
         } catch {}
 
@@ -380,7 +385,7 @@ export class Repo {
           this.#refsLoading = true;
           await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
           this.refs = this.branchManager.getAllRefs();
-          
+
           // Update selected branch state to match the resolved main branch
           // This ensures the UI reflects the actual checked-out branch after initialization
           const resolvedMainBranch = this.branchManager.getMainBranch();
@@ -401,6 +406,12 @@ export class Repo {
         if (this.#autoMergeAnalysisEnabled && this.patches.length > 0) {
           await this.#performMergeAnalysis(this.patches);
         }
+
+        // Trigger background branch sync to ensure all branches are fetched from remote
+        // This happens after initial setup to not block the UI
+        this.syncBranchesInBackground().catch((err) => {
+          console.warn("Background branch sync failed during initialization:", err);
+        });
       } catch (error) {
         console.error("Git initialization failed:", error);
 
@@ -547,9 +558,7 @@ export class Repo {
   // Status resolution (1630–1633)
   // -------------------------
   /** Resolve final status for a root id (issue or patch). */
-  public resolveStatusFor(
-    rootId: string
-  ): {
+  public resolveStatusFor(rootId: string): {
     state: "open" | "draft" | "closed" | "merged" | "resolved";
     by: string;
     at: number;
@@ -795,7 +804,7 @@ export class Repo {
 
     // Delegate to BranchManager
     await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
-    
+
     // Update selected branch to match the resolved main branch
     const resolvedMainBranch = this.branchManager.getMainBranch();
     if (resolvedMainBranch) {
@@ -858,24 +867,20 @@ export class Repo {
     Array<{ name: string; type: "heads" | "tags"; fullRef: string; commitId: string }>
   > {
     // Prefer merged refs by trusted maintainers when multiple 30618s are available
+    // But don't return early - we'll supplement with git branches below
+    let mergedRefs: Array<{
+      name: string;
+      type: "heads" | "tags";
+      fullRef: string;
+      commitId: string;
+    }> = [];
     if (this.#repoStateEventsArr && this.#repoStateEventsArr.length > 0) {
       if (!this.#mergedRefsCache) {
         this.#mergedRefsCache = this.mergeRepoStateByMaintainers(this.#repoStateEventsArr);
       }
-      const refs: Array<{
-        name: string;
-        type: "heads" | "tags";
-        fullRef: string;
-        commitId: string;
-      }> = [];
       for (const [key, ref] of this.#mergedRefsCache.entries()) {
         const name = key.split(":")[1];
-        refs.push({ name, type: ref.type, fullRef: ref.fullRef, commitId: ref.commitId });
-      }
-      if (refs.length > 0) {
-        return refs.sort((a, b) =>
-          a.type === b.type ? a.name.localeCompare(b.name) : a.type === "heads" ? -1 : 1
-        );
+        mergedRefs.push({ name, type: ref.type, fullRef: ref.fullRef, commitId: ref.commitId });
       }
     }
 
@@ -884,7 +889,10 @@ export class Repo {
       const hasProcessedState = this.branchManager?.getAllNIP34References().size > 0;
       if (!hasProcessedState) {
         if (this.#repo) {
-          await this.branchManager.processRepoStateEventVerified(this.#repoStateEvent, this.repoEvent!);
+          await this.branchManager.processRepoStateEventVerified(
+            this.#repoStateEvent,
+            this.repoEvent!
+          );
         } else {
           this.branchManager?.processRepoStateEvent(this.#repoStateEvent);
         }
@@ -905,12 +913,10 @@ export class Repo {
     const nip34Refs = this.branchManager?.getAllNIP34References() || new Map();
     const processedBranches = this.branchManager?.getBranches() || [];
 
-    const refs: Array<{ name: string; type: "heads" | "tags"; fullRef: string; commitId: string }> =
-      [];
-
-    // Process NIP-34 references first
+    // Process NIP-34 references first using a map to avoid duplicates
+    const refsMap = new Map<string, { name: string; type: "heads" | "tags"; fullRef: string; commitId: string }>();
     for (const [shortName, ref] of nip34Refs) {
-      refs.push({
+      refsMap.set(shortName, {
         name: shortName,
         type: ref.type,
         fullRef: ref.fullRef,
@@ -918,7 +924,57 @@ export class Repo {
       });
     }
 
-    // Fallback to processed branches if no NIP-34 refs available
+    // Add merged refs if available (don't overwrite NIP-34 refs)
+    if (mergedRefs.length > 0) {
+      for (const ref of mergedRefs) {
+        if (!refsMap.has(ref.name)) {
+          refsMap.set(ref.name, ref);
+        }
+      }
+    }
+
+    // Convert map to array
+    const refs: Array<{ name: string; type: "heads" | "tags"; fullRef: string; commitId: string }> = Array.from(refsMap.values());
+
+    // Always supplement with git branches to ensure we have all remote branches from git provider
+    // This is important because NIP-34 refs might not include all branches
+    if (this.workerManager?.isReady && this.repoEvent && this.branchManager) {
+      try {
+        // Load branches from git repository (includes both local and remote)
+        try {
+          const repoBranches = await this.workerManager.listBranchesFromEvent({
+            repoEvent: this.repoEvent,
+          });
+          // Get commit IDs for branches from NIP-34 refs if available, otherwise use empty string
+          const existingNames = new Set(refs.map((r) => r.name));
+          for (const branch of repoBranches) {
+            if (!existingNames.has(branch.name)) {
+              // Try to get commit ID from branch manager's NIP-34 refs
+              let commitId = "";
+              const nip34Ref = this.branchManager.getNIP34Reference(branch.name);
+              if (nip34Ref) {
+                commitId = nip34Ref.commitId;
+              } else if (branch.oid) {
+                commitId = branch.oid;
+              }
+
+              refs.push({
+                name: branch.name,
+                type: "heads" as const,
+                fullRef: `refs/heads/${branch.name}`,
+                commitId,
+              });
+            }
+          }
+        } catch (error) {
+          console.warn("Failed to load branches from git repository:", error);
+        }
+      } catch (error) {
+        console.warn("Error fetching remote branches:", error);
+      }
+    }
+
+    // If we still have no refs, use processed branches as final fallback
     if (refs.length === 0 && processedBranches.length > 0) {
       for (const branch of processedBranches) {
         const refObj = {
@@ -967,10 +1023,10 @@ export class Repo {
     return this.#branchSwitching;
   }
 
-  async setSelectedBranch(branchName: string) {    
+  async setSelectedBranch(branchName: string) {
     // Set switching flag to prevent premature loads
     this.#branchSwitching = true;
-    
+
     // Update in BranchManager first
     this.branchManager.setSelectedBranch(branchName);
 
@@ -1012,7 +1068,7 @@ export class Repo {
               cloneUrls,
               branch: shortBranch,
             });
-            
+
             // Only clear cache if remote had updates or if sync reports it needs update
             if (this.syncStatus?.needsUpdate) {
               console.log("Branch content changed, will clear cache");
@@ -1035,7 +1091,9 @@ export class Repo {
         // 3) Clear caches only if branch content actually changed
         if (shouldClearCache) {
           console.log("Clearing file cache due to branch update");
-          try { await this.fileManager.clearCache(this.key); } catch {}
+          try {
+            await this.fileManager.clearCache(this.key);
+          } catch {}
         } else {
           console.log("Preserving file cache - branch unchanged");
         }
@@ -1051,13 +1109,13 @@ export class Repo {
             this.branchManager.getMainBranch()
           );
         };
-        
+
         try {
           await this.commitManager.loadPage(1); // Reset to page 1 for the new branch
         } finally {
           this.commitManager.loadCommits = originalLoadCommits;
         }
-        
+
         // Note: We rely on CommitManager's built-in caching (IndexedDB)
         // which is per-branch, so switching back to a recent branch is instant
       }
@@ -1066,24 +1124,50 @@ export class Repo {
       this.invalidateBranchCache();
 
       // 4) Reload refs so UI sees updated heads/tags state
+      // Preserve existing refs to avoid losing them during reload
+      const existingRefs = [...this.refs];
       try {
         this.#refsLoading = true;
         await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
-        this.refs = this.branchManager.getAllRefs();
+        const newRefs = this.branchManager.getAllRefs();
+        // Merge existing refs with new refs to ensure we don't lose any
+        const refsMap = new Map<string, { name: string; type: "heads" | "tags"; fullRef: string; commitId: string }>();
+        // First add existing refs to preserve them
+        for (const ref of existingRefs) {
+          refsMap.set(ref.name, ref);
+        }
+        // Then add/update with new refs (new refs take precedence for commit IDs)
+        for (const ref of newRefs) {
+          refsMap.set(ref.name, ref);
+        }
+        // Sort refs: heads first, then tags, alphabetically within each type
+        this.refs = Array.from(refsMap.values()).sort((a, b) => {
+          if (a.type !== b.type) {
+            return a.type === "heads" ? -1 : 1;
+          }
+          return a.name.localeCompare(b.name);
+        });
+      } catch (refsError) {
+        console.warn("Failed to reload refs during branch switch, preserving existing refs:", refsError);
+        // Keep existing refs if reload fails
+        this.refs = existingRefs;
       } finally {
         this.#refsLoading = false;
       }
 
       // 5) Verify worker status (debug visibility)
       try {
-        const status = await this.workerManager.getStatus({ repoId: this.key, branch: shortBranch });
+        const status = await this.workerManager.getStatus({
+          repoId: this.key,
+          branch: shortBranch,
+        });
         console.log("Worker status after branch switch:", status);
       } catch {}
     } catch (e) {
       console.error("Failed to switch branch in worker or refresh commits:", e);
       toast.push({
         message: `Failed to switch branch: ${e instanceof Error ? e.message : String(e)}`,
-        theme: "error"
+        theme: "error",
       });
     } finally {
       // Clear switching flag
@@ -1284,6 +1368,76 @@ export class Repo {
   }
 
   /**
+   * Sync repository with remote in the background to fetch all branches
+   * This uses smartInitializeRepo which fetches all refs with singleBranch: false
+   * to ensure we have the latest branch list including newly created branches
+   */
+  async syncBranchesInBackground(): Promise<void> {
+    if (!this.repoEvent || !this.workerManager.isReady) {
+      return;
+    }
+
+    const repoId = this.key;
+    const cloneUrls = [...(this.#repo?.clone || [])];
+
+    if (!repoId || !cloneUrls.length) {
+      console.warn("Cannot sync branches: repository ID or clone URLs missing");
+      return;
+    }
+
+    const timeoutMinutes = 2;
+
+    try {
+      console.log("🔄 Syncing branches in background with remote...");
+
+      // Use smartInitializeRepo which fetches all branches with singleBranch: false
+      // Use a much longer timeout (timeoutMinutes minutes = timeoutMinutes * 60 * 1000ms) for background operations
+      // to handle large repositories with many branches or slow network connections
+      const result = await this.workerManager.smartInitializeRepo({
+        repoId,
+        cloneUrls,
+        forceUpdate: true,
+        timeoutMs: timeoutMinutes * 60 * 1000,
+      });
+
+      if (result.success) {
+        // Reload branches after sync to get the latest branch list
+        try {
+          await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
+          this.refs = this.branchManager.getAllRefs();
+          console.log(`✅ Background sync complete: ${this.refs.length} refs available`);
+        } catch (branchError) {
+          console.warn("Failed to reload branches after background sync:", branchError);
+        }
+      } else {
+        console.warn("Background branch sync failed:", result.error);
+      }
+    } catch (error) {
+      // Handle timeout errors specifically - these are expected for slow networks/large repos
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("timed out")) {
+        console.warn(
+          `Background branch sync timed out after ${timeoutMinutes} minutes (repository may be very large or network is very slow):`,
+          errorMessage
+        );
+        // Try to reload branches anyway - they might have been partially fetched
+        try {
+          await this.branchManager.loadAllRefs(() => this.getAllRefsWithFallback());
+          this.refs = this.branchManager.getAllRefs();
+          console.log(
+            `⚠️ Partial branch sync: ${this.refs.length} refs available (sync may have been incomplete)`
+          );
+        } catch (branchError) {
+          // Ignore - branches will be available from cache or previous sync
+        }
+      } else {
+        // Other errors - fail silently in background to not disrupt user experience
+        console.warn("Background branch sync error:", error);
+      }
+    }
+  }
+
+  /**
    * Reset the repository state and clear all caches
    * Forces fresh data to be loaded from remote and resets local git state
    */
@@ -1325,10 +1479,7 @@ export class Repo {
     if (this.repoEvent) {
       try {
         console.log("Resetting local git repository to match remote...");
-        const resetResult = await this.workerManager.resetRepoToRemote(
-          this.key,
-          this.mainBranch
-        );
+        const resetResult = await this.workerManager.resetRepoToRemote(this.key, this.mainBranch);
 
         if (resetResult.success) {
           console.log(`Git reset successful: ${resetResult.message}`);
@@ -1474,9 +1625,10 @@ export class Repo {
 
   async getHeadCommitId(branchName?: string): Promise<string> {
     try {
-      const short = (branchName || this.selectedBranch || this.mainBranch || "").split("/").pop() || "";
+      const short =
+        (branchName || this.selectedBranch || this.mainBranch || "").split("/").pop() || "";
       const refs = await this.getAllRefsWithFallback();
-      const hit = refs.find(r => r.type === "heads" && r.name === short);
+      const hit = refs.find((r) => r.type === "heads" && r.name === short);
       return hit?.commitId || "";
     } catch {
       return "";

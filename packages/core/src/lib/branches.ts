@@ -27,8 +27,34 @@ export async function listBranchesFromEvent(opts: {
 
   const dir = `${rootDir}/${canonicalKey}`;
   const git = getGitProvider();
-  const branches = await git.listBranches({ dir });
-  return branches.map((name: string) => ({ name }));
+  
+  // Get both local and remote branches
+  const localBranches = await git.listBranches({ dir });
+  let remoteBranches: string[] = [];
+  
+  try {
+    // Try to get remote branches from origin
+    remoteBranches = await git.listBranches({ dir, remote: 'origin' });
+  } catch (error) {
+    // If remote branches can't be listed (e.g., no remote configured), continue with local only
+    console.warn("Could not list remote branches:", error);
+  }
+  
+  // Combine local and remote branches, removing 'origin/' prefix from remote branch names
+  const allBranches = new Set<string>();
+  
+  // Add local branches
+  for (const branch of localBranches) {
+    allBranches.add(branch);
+  }
+  
+  // Add remote branches (remove 'origin/' prefix if present)
+  for (const branch of remoteBranches) {
+    const branchName = branch.startsWith('origin/') ? branch.slice(7) : branch;
+    allBranches.add(branchName);
+  }
+  
+  return Array.from(allBranches).map((name: string) => ({ name, isHead: false }));
 }
 
 /**

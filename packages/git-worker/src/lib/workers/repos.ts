@@ -83,19 +83,23 @@ export async function smartInitializeRepoUtil(
     const dir = `${rootDir}/${key}`;
     const isAlreadyCloned = await isRepoCloned(git, dir);
 
-    if (isAlreadyCloned && !forceUpdate) {
+    if (isAlreadyCloned) {
       try {
         sendProgress('Syncing with remote');
         const cloneUrl = cloneUrls[0];
         if (cloneUrl) {
           try {
+            sendProgress('Fetching latest changes from remote');
+            const fetchStartTime = Date.now();
+            // Fetch all branches by not specifying a ref and using singleBranch: false
             await git.fetch({
               dir,
               url: cloneUrl,
-              ref: 'HEAD', // Use HEAD instead of trying to resolve branch first
               singleBranch: false,
               depth: repoDataLevels.get(key) === 'full' ? undefined : 50
             });
+            const fetchDuration = ((Date.now() - fetchStartTime) / 1000).toFixed(1);
+            sendProgress(`Fetch completed successfully (${fetchDuration}s)`);
           } catch (fetchError: any) {
             // Handle CORS/network errors gracefully during fetch
             const errorMessage = fetchError?.message || String(fetchError);
@@ -104,6 +108,7 @@ export async function smartInitializeRepoUtil(
                 errorMessage.includes('Failed to fetch') ||
                 errorMessage.includes('Access-Control')) {
               console.warn(`[smartInitializeRepo] CORS/Network error during fetch, using local data only:`, errorMessage);
+              sendProgress('Using local data due to network restrictions');
               // Continue with local data, don't throw error
             } else {
               throw fetchError;
@@ -114,9 +119,12 @@ export async function smartInitializeRepoUtil(
         // Try to resolve branch, but handle empty repos gracefully
         let mainBranch: string;
         try {
+          sendProgress('Resolving repository branch');
           mainBranch = await resolveRobustBranch(git, dir);
+          sendProgress(`Found branch: ${mainBranch}`);
         } catch (branchError) {
           console.warn(`[smartInitializeRepo] Could not resolve branches, repository may be empty:`, branchError);
+          sendProgress('Repository appears to be empty');
           // For empty repos, we'll return a limited success state
           return toPlain({
             success: true,
@@ -130,7 +138,9 @@ export async function smartInitializeRepoUtil(
         const remoteRef = `refs/remotes/origin/${mainBranch}`;
         let remoteCommit: string;
         try {
+          sendProgress('Resolving remote commit');
           remoteCommit = await git.resolveRef({ dir, ref: remoteRef });
+          sendProgress('Updating local references');
           await git.writeRef({ dir, ref: `refs/heads/${mainBranch}`, value: remoteCommit });
           await git.writeRef({
             dir,
@@ -140,15 +150,66 @@ export async function smartInitializeRepoUtil(
           });
           sendProgress('Local repository synced with remote');
         } catch (e) {
+          sendProgress('Using local HEAD commit');
           remoteCommit = await git.resolveRef({ dir, ref: 'HEAD' });
         }
-        const branches = await git.listBranches({ dir });
+        sendProgress('Listing repository branches');
+        // Get both local and remote branches
+        const localBranches = await git.listBranches({ dir });
+        let remoteBranches: string[] = [];
+        try {
+          remoteBranches = await git.listBranches({ dir, remote: 'origin' });
+        } catch (error) {
+          console.warn('[smartInitializeRepo] Could not list remote branches:', error);
+        }
+        
+        // Combine local and remote branches, removing 'origin/' prefix from remote branch names
+        const allBranches = new Set<string>();
+        const branchCommits = new Map<string, string>();
+        
+        // Add local branches with their commits
+        for (const branch of localBranches) {
+          allBranches.add(branch);
+          try {
+            const commit = await git.resolveRef({ dir, ref: `refs/heads/${branch}` });
+            branchCommits.set(branch, commit);
+          } catch (e) {
+            // Fallback to remoteCommit if can't resolve
+            branchCommits.set(branch, remoteCommit);
+          }
+        }
+        
+        // Add remote branches (remove 'origin/' prefix if present) and resolve their commits
+        for (const branch of remoteBranches) {
+          const branchName = branch.startsWith('origin/') ? branch.slice(7) : branch;
+          allBranches.add(branchName);
+          try {
+            // Try to resolve remote branch commit
+            const remoteRef = branch.startsWith('origin/') ? `refs/remotes/${branch}` : `refs/remotes/origin/${branch}`;
+            const commit = await git.resolveRef({ dir, ref: remoteRef });
+            branchCommits.set(branchName, commit);
+          } catch (e) {
+            // If remote branch commit can't be resolved, try local branch or fallback
+            try {
+              const commit = await git.resolveRef({ dir, ref: `refs/heads/${branchName}` });
+              branchCommits.set(branchName, commit);
+            } catch (e2) {
+              branchCommits.set(branchName, remoteCommit);
+            }
+          }
+        }
+
+        
+        sendProgress('Updating repository cache with ' + allBranches.size + ' branches');
         const newCache: RepoCache = {
           repoId: key,
           lastUpdated: Date.now(),
           headCommit: remoteCommit,
           dataLevel: (repoDataLevels.get(key) || 'shallow') as DataLevel,
-          branches: branches.map((name: string) => ({ name, commit: remoteCommit })),
+          branches: Array.from(allBranches).map((name: string) => ({ 
+            name, 
+            commit: branchCommits.get(name) || remoteCommit 
+          })),
           cloneUrls
         };
         await cacheManager.setRepoCache(newCache);
@@ -166,6 +227,7 @@ export async function smartInitializeRepoUtil(
         };
       } catch (e) {
         // fall through to re-init
+        sendProgress('Sync failed, re-initializing repository');
       }
     }
 

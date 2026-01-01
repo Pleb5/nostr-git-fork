@@ -105,7 +105,7 @@ export class WorkerManager {
       this.initInFlight = null;
     }
   }
-  async execute<T>(operation: string, params: any): Promise<T> {
+  async execute<T>(operation: string, params: any, options?: { timeoutMs?: number }): Promise<T> {
     if (!this.isInitialized || !this.api) {
       throw new Error("WorkerManager not initialized. Call initialize() first.");
     }
@@ -135,16 +135,31 @@ export class WorkerManager {
       // Check if method is actually a function
       
       // Add timeout to detect hanging worker calls
-      const timeoutMs = operation === 'analyzePatchMerge' ? 90000 : 30000;
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`Worker operation '${operation}' timed out after ${timeoutMs}ms`)), timeoutMs);
-      });
-      const resultPromise = method(safeParams);
-      const result = await Promise.race([resultPromise, timeoutPromise]);
-      try {
-        return JSON.parse(JSON.stringify(result)) as T;
-      } catch {
-        return result as T;
+      // Allow custom timeout to be specified for long-running background operations
+      const timeoutMs = options?.timeoutMs ?? (
+        operation === 'analyzePatchMerge' ? 90000 : 30000
+      );
+
+      // If timeout is 0 or negative, don't apply timeout (for truly long-running background ops)
+      if (timeoutMs > 0) {
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Worker operation '${operation}' timed out after ${timeoutMs}ms`)), timeoutMs);
+        });
+        const resultPromise = method(safeParams);
+        const result = await Promise.race([resultPromise, timeoutPromise]);
+        try {
+          return JSON.parse(JSON.stringify(result)) as T;
+        } catch {
+          return result as T;
+        }
+      } else {
+        // No timeout - for long-running background operations
+        const result = await method(safeParams);
+        try {
+          return JSON.parse(JSON.stringify(result)) as T;
+        } catch {
+          return result as T;
+        }
       }
     } catch (error) {
       console.error('[WorkerManager] execute error:', error);
@@ -164,8 +179,10 @@ export class WorkerManager {
     cloneUrls: string[];
     branch?: string;
     forceUpdate?: boolean;
+    timeoutMs?: number; // Optional custom timeout for background operations
   }): Promise<any> {
-    return this.execute("smartInitializeRepo", params);
+    const { timeoutMs, ...executeParams } = params;
+    return this.execute("smartInitializeRepo", executeParams, { timeoutMs });
   }
 
   /**
