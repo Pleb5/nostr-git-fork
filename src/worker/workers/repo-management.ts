@@ -855,7 +855,7 @@ export async function forkAndCloneRepo(
       const listWorkflowFiles = async (): Promise<string[]> => {
         try {
           const files = await git.listFiles({dir: workingDir})
-          return files.filter(file => file.startsWith(".github/workflows/"))
+          return files.filter((file: string) => file.startsWith(".github/workflows/"))
         } catch (listErr: any) {
           console.warn("[forkAndCloneRepo] Failed to list workflow files:", listErr?.message)
           return []
