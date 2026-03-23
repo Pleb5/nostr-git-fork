@@ -6,11 +6,11 @@ import { getGitServiceApi, getGitServiceApiFromUrl, getAvailableProviders, suppo
 
 describe('git/provider-factory', () => {
   it('getAvailableProviders lists supported providers', () => {
-    expect(getAvailableProviders()).toEqual(['github', 'gitlab', 'gitea', 'bitbucket', 'grasp']);
+    expect(getAvailableProviders()).toEqual(['github', 'gitlab', 'gitea', 'bitbucket', 'grasp', 'grasp-rest']);
   });
 
   it('supportsRestApi returns true for known providers', () => {
-    for (const p of ['github', 'gitlab', 'gitea', 'bitbucket', 'grasp'] as const) {
+    for (const p of ['github', 'gitlab', 'gitea', 'bitbucket', 'grasp', 'grasp-rest'] as const) {
       expect(supportsRestApi(p)).toBe(true);
     }
   });
