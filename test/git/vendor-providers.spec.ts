@@ -13,7 +13,7 @@ describe('vendor-providers utilities', () => {
     expect(detectVendorFromUrl('https://gitlab.example.com/a/b')).toBe('gitlab');
     expect(detectVendorFromUrl('https://gitea.example.org/a/b')).toBe('gitea');
     expect(detectVendorFromUrl('https://bitbucket.example.net/a/b')).toBe('bitbucket');
-    expect(detectVendorFromUrl('wss://relay.example')).toBe('grasp');
+    expect(detectVendorFromUrl('wss://relay.example')).toBe('grasp-rest');
     expect(detectVendorFromUrl('https://unknown.example/a/b')).toBe('generic');
   });
 

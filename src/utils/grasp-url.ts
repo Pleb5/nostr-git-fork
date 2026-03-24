@@ -53,3 +53,21 @@ export function parseGraspRepoHttpUrl(rawUrl: string): ParsedGraspRepoHttpUrl | 
 export function isGraspRepoHttpUrl(rawUrl: string): boolean {
   return parseGraspRepoHttpUrl(rawUrl) !== null
 }
+
+/** Well-known GRASP HTTP frontends (path may omit `.git` or use non-npub owners in UI URLs). */
+const KNOWN_GRASP_HTTP_HOSTS = new Set(["relay.ngit.dev", "gitnostr.com"])
+
+/** Strict GRASP repo URL (see parseGraspRepoHttpUrl) or known GRASP web host — for routing/inference. */
+export function isLikelyGraspHttpUrl(rawUrl: string): boolean {
+  if (isGraspRepoHttpUrl(rawUrl)) return true
+  try {
+    const url = new URL(rawUrl)
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false
+    const host = url.hostname.toLowerCase()
+    if (KNOWN_GRASP_HTTP_HOSTS.has(host)) return true
+    if (host.includes("grasp")) return true
+    return false
+  } catch {
+    return false
+  }
+}

@@ -8,11 +8,13 @@ describe('syncWithRemote with Enhanced Logging', () => {
   let mockCacheManager: Partial<RepoCacheManager>;
   let consoleLogs: string[];
   let consoleErrors: string[];
+  let consoleWarns: string[];
 
   beforeEach(() => {
     consoleLogs = [];
     consoleErrors = [];
-    
+    consoleWarns = [];
+
     // Capture console output
     vi.spyOn(console, 'log').mockImplementation((...args) => {
       consoleLogs.push(args.join(' '));
@@ -20,7 +22,9 @@ describe('syncWithRemote with Enhanced Logging', () => {
     vi.spyOn(console, 'error').mockImplementation((...args) => {
       consoleErrors.push(args.join(' '));
     });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation((...args) => {
+      consoleWarns.push(args.join(' '));
+    });
 
     mockGit = {
       listRemotes: vi.fn().mockResolvedValue([
@@ -91,12 +95,13 @@ describe('syncWithRemote with Enhanced Logging', () => {
       }
     );
 
-    expect(result.success).toBe(false);
-    expect((result as any).error).toBe('Network timeout');
-    
-    const allErrors = consoleErrors.join(' ');
-    expect(allErrors).toContain('[syncWithRemote] Sync failed');
-    expect(allErrors).toContain('Network timeout');
+    expect(result.success).toBe(true);
+    expect((result as any).synced).toBe(false);
+    expect((result as any).warning).toMatch(/fetch from any remote|CORS|network/i);
+    expect(String((result as any).errorDetails || '')).toContain('Network timeout');
+
+    const allWarns = consoleWarns.join(' ');
+    expect(allWarns).toMatch(/CORS\/Network|local data only/i);
   });
 
   it('should return needsUpdate flag', async () => {

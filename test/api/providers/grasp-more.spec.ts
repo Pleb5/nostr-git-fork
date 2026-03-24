@@ -40,6 +40,9 @@ vi.mock('isomorphic-git', async () => {
 
 import { GraspApiProvider } from '../../../src/api/providers/grasp.js';
 
+/** Valid hex pubkey for toNpub / query mocks (64 chars). */
+const TEST_OWNER_HEX = 'ab'.repeat(32);
+
 describe('api/providers: GraspApiProvider (additional coverage)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -49,7 +52,7 @@ describe('api/providers: GraspApiProvider (additional coverage)', () => {
     const provider = new GraspApiProvider('wss://relay.example/anything', 'pub');
     // Prevent network event queries
     (provider as any).queryEvents = vi.fn().mockResolvedValue([]);
-    const repo = await provider.getRepo('ownerpk', 'repo');
+    const repo = await provider.getRepo(TEST_OWNER_HEX, 'repo');
     // Current implementation may produce double slash; adjust expectation to match
     expect(repo.cloneUrl).toBe('https://host.example//npub1xyz/repo.git');
     expect(repo.htmlUrl).toBe('https://host.example//npub1xyz/repo');
@@ -64,7 +67,7 @@ describe('api/providers: GraspApiProvider (additional coverage)', () => {
       relayUrl,
     }));
     const provider = new GraspApiProvider('wss://relay.example', 'pub');
-    const res = await provider.publishStateFromLocal('ownerpk', 'repo', { includeTags: true });
+    const res = await provider.publishStateFromLocal(TEST_OWNER_HEX, 'repo', { includeTags: true });
     expect(res).toBeNull();
   });
 
@@ -73,7 +76,9 @@ describe('api/providers: GraspApiProvider (additional coverage)', () => {
       publishEvent: async () => { throw new Error('publish blocked'); }
     } as any);
 
-    const event: any = await provider.publishStateFromLocal('ownerpk', 'repo', { includeTags: true });
+    const event: any = await provider.publishStateFromLocal(TEST_OWNER_HEX, 'repo', {
+      includeTags: true,
+    });
     // Current implementation returns null when publishEvent throws; update test to match
     expect(event).toBeNull();
   });

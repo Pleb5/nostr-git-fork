@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { GitLabApi } from '../../../src/api/providers/gitlab.js';
 
-const makeFetchOk = (json: any) => vi.fn().mockResolvedValue({ ok: true, json: async () => json });
+const makeFetchOk = (json: any) =>
+  vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => JSON.stringify(json) });
 const makeFetchErr = (status = 404, text = 'Not Found') => vi.fn().mockResolvedValue({ ok: false, status, text: async () => text });
 
 describe('GitLabApi request/shape mapping', () => {
@@ -294,9 +295,9 @@ describe('GitLabApi request/shape mapping', () => {
     vi.spyOn(api as any, 'getProjectId').mockResolvedValue(777);
     const fetchMock = vi.fn()
       // PUT merge
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '{}' })
       // GET MR
-      .mockResolvedValueOnce({ ok: true, json: async () => mr });
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify(mr) });
     globalThis.fetch = fetchMock as any;
     const out = await api.mergePullRequest(owner, repo, 12, { mergeMethod: 'squash' });
     expect(out.number).toBe(12);
