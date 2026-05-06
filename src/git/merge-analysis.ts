@@ -1385,7 +1385,7 @@ async function detectConflictsFromStatusMatrix(
   prTipRef: string,
   tipOid: string,
 ): Promise<string[]> {
-  await git.checkout({dir: repoDir, ref: targetBranch})
+  await git.checkout({dir: repoDir, ref: targetBranch, force: true} as any)
   try {
     await git.deleteBranch({dir: repoDir, ref: tempBranch})
   } catch {
@@ -1419,27 +1419,17 @@ async function detectConflictsFromStatusMatrix(
     )
   }
 
-  // Check status matrix for conflicted files
+  // Check status matrix for modified files, then scan them for conflict markers.
   const status = await git.statusMatrix({dir: repoDir})
-  const conflictFiles: string[] = []
-  const seen = new Set<string>()
-
-  for (const row of status) {
-    const [filepath, head, workdir, stage] = row
-    if (filepath && !seen.has(filepath)) {
-      // Multiple stage entries for same file or unmerged files = conflict
-      if (stage === 1 || (head === 1 && workdir === 2 && stage === 0)) {
-        seen.add(filepath)
-        conflictFiles.push(filepath as string)
-      }
-    }
-  }
 
   // Additional check: scan for conflict markers in modified files
-  const additionalConflicts = await detectConflictsFromMarkers(git, repoDir, status, conflictFiles)
-  const allConflicts = [
-    ...new Set([...fallbackConflictFiles, ...conflictFiles, ...additionalConflicts]),
-  ]
+  const additionalConflicts = await detectConflictsFromMarkers(
+    git,
+    repoDir,
+    status,
+    fallbackConflictFiles,
+  )
+  const allConflicts = [...new Set([...fallbackConflictFiles, ...additionalConflicts])]
 
   console.log(
     `[performPRDryRunMerge] Status matrix + marker detection: ${allConflicts.length} conflicted files`,
@@ -1595,9 +1585,9 @@ async function handleMergeConflicts(
     )
   }
 
-  // Early return for clean merges
+  // A merge error without concrete files is unsafe to call clean.
   if (conflictFiles.length === 0) {
-    return {conflictFiles: [], conflictDetails: []}
+    throw new Error(`Unable to identify conflicted files from merge error: ${getErrorMessage(err)}`)
   }
 
   // Parse conflict markers from conflicted files
@@ -1617,6 +1607,32 @@ async function handleMergeConflicts(
   )
 
   return {conflictFiles, conflictDetails}
+}
+
+async function cleanupPRDryRunMerge(
+  git: GitProvider,
+  repoDir: string,
+  targetBranch: string,
+  tempBranch: string,
+  prTipRef: string,
+): Promise<void> {
+  try {
+    await git.checkout({dir: repoDir, ref: targetBranch, force: true} as any)
+  } catch (checkoutErr) {
+    console.warn("[performPRDryRunMerge] Cleanup failed to restore target branch:", checkoutErr)
+  }
+
+  try {
+    await git.deleteBranch({dir: repoDir, ref: tempBranch})
+  } catch (branchErr) {
+    console.warn("[performPRDryRunMerge] Cleanup failed to delete temp branch:", branchErr)
+  }
+
+  try {
+    await git.deleteRef({dir: repoDir, ref: prTipRef})
+  } catch (refErr) {
+    console.warn("[performPRDryRunMerge] Cleanup failed to delete temp PR ref:", refErr)
+  }
 }
 
 /**
@@ -1711,13 +1727,7 @@ async function performPRDryRunMerge(
     }
   } finally {
     // Restore repo state regardless of merge outcome
-    try {
-      await git.checkout({dir: repoDir, ref: targetBranch})
-      await git.deleteBranch({dir: repoDir, ref: tempBranch})
-      await git.deleteRef({dir: repoDir, ref: prTipRef})
-    } catch (cleanupErr) {
-      console.warn("[performPRDryRunMerge] Cleanup failed (checkout/branch/ref):", cleanupErr)
-    }
+    await cleanupPRDryRunMerge(git, repoDir, targetBranch, tempBranch, prTipRef)
   }
 }
 
