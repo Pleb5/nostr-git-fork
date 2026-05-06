@@ -395,6 +395,81 @@ describe("pr-merge", () => {
       expect(gitWithFallbackConflict.merge).toHaveBeenCalledTimes(2)
     })
 
+    it("uses marker scan without treating clean status rows as conflicts", async () => {
+      const gitWithMarkerConflict = {
+        ...mockGit,
+        merge: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("Automatic merge failed"))
+          .mockResolvedValueOnce({}),
+        statusMatrix: vi.fn().mockResolvedValue([
+          ["README.md", 1, 1, 1],
+          ["src/conflicted.ts", 1, 2, 1],
+        ]),
+        fs: {
+          promises: {
+            readFile: vi.fn(async (path: string) =>
+              path.includes("src/conflicted.ts")
+                ? "<<<<<<< ours\nold\n=======\nnew\n>>>>>>> theirs\n"
+                : "unchanged\n",
+            ),
+          },
+        },
+      } as any
+
+      const result = await analyzePRMergeUtil(
+        gitWithMarkerConflict,
+        {
+          repoId: "repo",
+          prCloneUrls: ["https://github.com/user/fork.git"],
+          targetCloneUrls: ["https://github.com/upstream/repo.git"],
+          tipCommitOid: "tip-oid",
+          targetBranch: "main",
+        } as AnalyzePRMergeOptions,
+        baseDeps as any,
+      )
+
+      expect(result.analysis).toBe("conflicts")
+      expect(result.hasConflicts).toBe(true)
+      expect(result.conflictFiles).toEqual(["src/conflicted.ts"])
+      expect(result.conflictFiles).not.toContain("README.md")
+    })
+
+    it("returns an error when conflict files cannot be identified", async () => {
+      const gitWithMarkerlessConflict = {
+        ...mockGit,
+        merge: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("Automatic merge failed"))
+          .mockResolvedValueOnce({}),
+        statusMatrix: vi.fn().mockResolvedValue([["README.md", 1, 1, 1]]),
+      } as any
+
+      const result = await analyzePRMergeUtil(
+        gitWithMarkerlessConflict,
+        {
+          repoId: "repo",
+          prCloneUrls: ["https://github.com/user/fork.git"],
+          targetCloneUrls: ["https://github.com/upstream/repo.git"],
+          tipCommitOid: "tip-oid",
+          targetBranch: "main",
+        } as AnalyzePRMergeOptions,
+        baseDeps as any,
+      )
+
+      expect(result.analysis).toBe("error")
+      expect(result.hasConflicts).toBe(false)
+      expect(result.conflictFiles).toEqual([])
+      expect(result.errorMessage).toContain("Unable to identify conflicted files")
+      expect(gitWithMarkerlessConflict.checkout).toHaveBeenCalledWith(
+        expect.objectContaining({ref: "main", force: true}),
+      )
+      expect(gitWithMarkerlessConflict.deleteBranch).toHaveBeenCalled()
+      expect(gitWithMarkerlessConflict.deleteRef).toHaveBeenCalledWith(
+        expect.objectContaining({ref: expect.stringContaining("refs/pr-tip-analysis-")}),
+      )
+    })
+
     it("returns conflicts when initial merge reports conflict filepaths", async () => {
       const gitWithInitialConflict = {
         ...mockGit,
